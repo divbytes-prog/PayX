@@ -6,15 +6,24 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck:api": "tsc -p tsconfig.api.json",
+    "test": "tsc -p tsconfig.test.json && node --test .test-dist/server/*.test.js"
   },
   "dependencies": {
+    "jose": "^6.1.0",
+    "paytmchecksum": "^1.5.1",
+    "postgres": "^3.4.7",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "stripe": "^19.1.0",
+    "zod": "^4.1.11"
   },
   "devDependencies": {
+    "@types/node": "^24.10.0",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
+    "@vercel/node": "^5.4.0",
     "@vitejs/plugin-react": "^5.0.4",
     "typescript": "^5.9.2",
     "vite": "^7.1.7"
