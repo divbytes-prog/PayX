@@ -127,6 +127,33 @@ button {
 .newKey {
   margin: 0 0 16px;
 }
+.modeSelect {
+  min-width: 120px;
+}
+.modeSelect select {
+  display: block;
+  margin-top: 6px;
+}
+.connectionActions {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+.connectionActions small {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.keysPanel {
+  max-width: 600px;
+  margin-bottom: 20px;
+}
+.secretValue {
+  display: block;
+  overflow-wrap: anywhere;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+}
 .wrap {
   width: min(1180px, calc(100% - 40px));
   margin: auto;

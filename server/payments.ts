@@ -4,7 +4,7 @@ import Stripe from "stripe";
 import { z } from "zod";
 import type { Actor } from "./auth.js";
 import { audit } from "./auth.js";
-import { config } from "./config.js";
+import { config, stripePlatform } from "./config.js";
 import { db, ensureSchema } from "./db.js";
 import { ApiError } from "./http.js";
 import {
@@ -23,11 +23,27 @@ export const paymentSchema = z.object({
   routingRule: z
     .enum(["balanced", "lowest_fee", "lowest_latency"])
     .default("balanced"),
+  preferredGateway: z.enum(["stripe", "razorpay", "paytm"]).optional(),
   idempotencyKey: z.string().trim().min(4).max(128),
   customerId: z.string().trim().min(1).max(128).optional(),
   description: z.string().trim().max(500).optional(),
   metadata: z.record(z.string(), z.string()).default({}),
 });
+
+export type Checkout =
+  | { kind: "redirect"; url: string }
+  | { kind: "razorpay"; keyId: string; orderId: string; amount: number; currency: string }
+  | { kind: "paytm"; merchantId: string; orderId: string; token: string; amount: string; mode: "test" | "live" };
+
+export function fingerprint(input: z.infer<typeof paymentSchema>, mode: "test" | "live") {
+  return createHash("sha256").update(JSON.stringify({
+    amount: input.amount, currency: input.currency, routingRule: input.routingRule,
+    preferredGateway: input.preferredGateway ?? null, customerId: input.customerId ?? null,
+    description: input.description ?? null,
+    metadata: Object.fromEntries(Object.entries(input.metadata).sort(([a], [b]) => a.localeCompare(b))),
+    mode,
+  })).digest("hex");
+}
 
 const providerProfile: Record<
   Provider,
@@ -73,7 +89,15 @@ function normalized(
   };
 }
 
-function toMinorUnits(amount: number, currency: string) {
+function duplicateResult(row: Record<string, unknown>, hash: string, mode: "test" | "live") {
+  if (row.mode !== mode || (row.request_fingerprint && row.request_fingerprint !== hash))
+    throw new ApiError(409, "IDEMPOTENCY_CONFLICT", "This idempotency key was used for a different payment");
+  if (row.status === "created" || (row.status === "processing" && !Object.keys(row.checkout_data as Record<string, unknown> ?? {}).length))
+    throw new ApiError(409, "PAYMENT_PENDING", "The provider request is still being verified. Check the ledger before retrying or using a new key");
+  return { transaction: normalized(row, { checkout: row.checkout_data ?? {} }), duplicate: true };
+}
+
+export function toMinorUnits(amount: number, currency: string) {
   const zeroDecimal = new Set([
     "BIF",
     "CLP",
@@ -106,24 +130,28 @@ async function runStripe(
       "GATEWAY_NOT_CONFIGURED",
       "Stripe is not connected",
     );
-  const credentials = revealGatewayCredentials<{ accessToken: string }>(
-    gateway,
-  );
-  const stripe = new Stripe(credentials.accessToken);
-  const intent = await stripe.paymentIntents.create(
-    {
-      amount: toMinorUnits(input.amount, input.currency),
+  if (!gateway.provider_account_id)
+    throw new ApiError(409, "GATEWAY_NOT_CONFIGURED", "Stripe account ID is missing");
+  const stripe = new Stripe(stripePlatform(gateway.mode).secretKey);
+  const redirect = `${config.appUrl}/?payment=${encodeURIComponent(transactionId)}&mode=${gateway.mode}#dashboard`;
+  const session = await stripe.checkout.sessions.create({
+    mode: "payment",
+    client_reference_id: transactionId,
+    line_items: [{ price_data: {
       currency: input.currency.toLowerCase(),
-      automatic_payment_methods: { enabled: true },
-      description: input.description,
-      metadata: { payx_transaction_id: transactionId, ...input.metadata },
-    },
-    { idempotencyKey: input.idempotencyKey },
-  );
+      unit_amount: toMinorUnits(input.amount, input.currency),
+      product_data: { name: (input.description || "PayX payment").slice(0, 120) },
+    }, quantity: 1 }],
+    metadata: { payx_transaction_id: transactionId },
+    payment_intent_data: { metadata: { payx_transaction_id: transactionId } },
+    success_url: redirect,
+    cancel_url: redirect,
+  }, { stripeAccount: gateway.provider_account_id, idempotencyKey: transactionId });
+  if (!session.url) throw new ApiError(502, "GATEWAY_ERROR", "Stripe did not return a checkout URL");
   return {
-    providerId: intent.id,
-    status: intent.status,
-    clientSecret: intent.client_secret,
+    providerId: session.id,
+    status: "requires_action",
+    checkout: { kind: "redirect", url: session.url } satisfies Checkout,
   };
 }
 
@@ -171,8 +199,9 @@ async function runRazorpay(
     );
   return {
     providerId: body.id,
-    status: body.status === "paid" ? "succeeded" : "requires_action",
-    clientSecret: null,
+    status: "requires_action",
+    checkout: { kind: "razorpay", keyId: credentials.keyId, orderId: body.id,
+      amount: toMinorUnits(input.amount, input.currency), currency: input.currency } satisfies Checkout,
   };
 }
 
@@ -183,6 +212,8 @@ async function runPaytm(
 ) {
   if (!gateway)
     throw new ApiError(409, "GATEWAY_NOT_CONFIGURED", "Paytm is not connected");
+  if (input.currency !== "INR")
+    throw new ApiError(400, "UNSUPPORTED_CURRENCY", "Paytm checkout currently accepts INR only");
   const credentials = revealGatewayCredentials<{
     merchantId: string;
     merchantKey: string;
@@ -194,6 +225,7 @@ async function runPaytm(
     mid: credentials.merchantId,
     websiteName: credentials.website,
     orderId: transactionId,
+    callbackUrl: `${config.appUrl}/api/webhooks/paytm`,
     txnAmount: { value: input.amount.toFixed(2), currency: input.currency },
     userInfo: {
       custId:
@@ -230,19 +262,20 @@ async function runPaytm(
   return {
     providerId: transactionId,
     status: "requires_action",
-    clientSecret: result.body.txnToken,
+    checkout: { kind: "paytm", merchantId: credentials.merchantId, orderId: transactionId,
+      token: result.body.txnToken, amount: input.amount.toFixed(2), mode: gateway.mode } satisfies Checkout,
   };
 }
 
 export async function createPayment(actor: Actor, inputValue: unknown) {
   await ensureSchema();
   const input = paymentSchema.parse(inputValue);
+  const hash = fingerprint(input, actor.mode);
   const sql = db();
   const existing = await sql<Record<string, unknown>[]>`
     SELECT * FROM transactions WHERE organization_id = ${actor.organizationId}
       AND idempotency_key = ${input.idempotencyKey} LIMIT 1`;
-  if (existing[0])
-    return { transaction: normalized(existing[0]), duplicate: true };
+  if (existing[0]) return duplicateResult(existing[0], hash, actor.mode);
 
   const connections = await sql<{ provider: Provider }[]>`
     SELECT provider FROM gateway_connections WHERE organization_id = ${actor.organizationId}
@@ -250,23 +283,29 @@ export async function createPayment(actor: Actor, inputValue: unknown) {
   if (actor.mode === "live" && config.sandboxOnly)
     throw new ApiError(409, "SANDBOX_ONLY", "Live payments are disabled");
   const isSimulation = config.sandboxOnly && connections.length === 0 && actor.mode === "test";
-  const provider = isSimulation
-    ? "stripe"
-    : selectProvider(connections.map((row) => row.provider), input.routingRule);
+  const available = connections.map((row) => row.provider);
+  if (input.preferredGateway && !isSimulation && !available.includes(input.preferredGateway))
+    throw new ApiError(409, "GATEWAY_NOT_CONFIGURED", "Connect the selected gateway in this mode first");
+  if (actor.mode === "live" && !input.preferredGateway && available.length > 1)
+    throw new ApiError(400, "GATEWAY_REQUIRED", "Select a connected live gateway explicitly");
+  const provider = isSimulation ? "stripe"
+    : input.preferredGateway ?? selectProvider(available, input.routingRule);
+  if (provider === "paytm" && input.currency !== "INR")
+    throw new ApiError(400, "UNSUPPORTED_CURRENCY", "Paytm checkout currently accepts INR only");
   const id = `px_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
   const initialStatus = isSimulation ? "simulated" : "created";
   const inserted = await sql<Record<string, unknown>[]>`
     INSERT INTO transactions
-      (id, organization_id, amount, currency, status, provider, idempotency_key, routing_rule, mode, metadata)
+      (id, organization_id, amount, currency, status, provider, idempotency_key, routing_rule, mode, metadata, request_fingerprint)
     VALUES (${id}, ${actor.organizationId}, ${input.amount}, ${input.currency}, ${initialStatus}, ${provider},
-      ${input.idempotencyKey}, ${input.routingRule}, ${actor.mode}, ${sql.json(input.metadata)})
+      ${input.idempotencyKey}, ${input.routingRule}, ${actor.mode}, ${sql.json(input.metadata)}, ${hash})
     ON CONFLICT (organization_id, idempotency_key) DO NOTHING
     RETURNING *`;
   if (!inserted[0]) {
     const duplicate = await sql<Record<string, unknown>[]>`
       SELECT * FROM transactions WHERE organization_id = ${actor.organizationId}
         AND idempotency_key = ${input.idempotencyKey} LIMIT 1`;
-    return { transaction: normalized(duplicate[0]), duplicate: true };
+    return duplicateResult(duplicate[0], hash, actor.mode);
   }
 
   if (isSimulation) {
@@ -300,14 +339,16 @@ export async function createPayment(actor: Actor, inputValue: unknown) {
           ? await runRazorpay(connection, input, id)
           : await runPaytm(connection, input, id);
     const rows = await sql<Record<string, unknown>[]>`
-      UPDATE transactions SET status = ${result.status}, provider_payment_id = ${result.providerId}, updated_at = NOW()
+      UPDATE transactions SET status = CASE WHEN status IN ('succeeded', 'failed') THEN status ELSE ${result.status} END,
+        provider_payment_id = ${result.providerId},
+        checkout_data = ${sql.json(result.checkout)}, updated_at = NOW()
       WHERE id = ${id} RETURNING *`;
     await audit(actor, "payment.created", "transaction", id, {
       provider,
       sandbox: false,
-    });
+    }).catch((error) => console.error("Payment audit failed", error));
     return {
-      transaction: normalized(rows[0], { clientSecret: result.clientSecret }),
+      transaction: normalized(rows[0], { checkout: result.checkout }),
       duplicate: false,
       sandbox: false,
     };
@@ -316,7 +357,8 @@ export async function createPayment(actor: Actor, inputValue: unknown) {
       error instanceof Error
         ? error.message.slice(0, 500)
         : "Gateway request failed";
-    await sql`UPDATE transactions SET status = 'failed', failure_code = 'gateway_error', failure_message = ${message}, updated_at = NOW() WHERE id = ${id}`;
+    await sql`UPDATE transactions SET status = 'processing', failure_code = 'gateway_unverified', failure_message = ${message},
+      updated_at = NOW() WHERE id = ${id} AND status = 'created'`;
     throw error;
   }
 }
@@ -326,7 +368,7 @@ export async function listTransactions(actor: Actor, limit = 50) {
   const sql = db();
   const safeLimit = Math.max(1, Math.min(100, limit));
   const rows = await sql<Record<string, unknown>[]>`
-    SELECT * FROM transactions WHERE organization_id = ${actor.organizationId}
+    SELECT * FROM transactions WHERE organization_id = ${actor.organizationId} AND mode = ${actor.mode}
     ORDER BY created_at DESC LIMIT ${safeLimit}`;
   return rows.map((row) => normalized(row));
 }

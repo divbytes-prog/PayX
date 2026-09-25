@@ -35,9 +35,9 @@ The public experience includes an anonymous browser sandbox at [`#sandbox`](http
 
 ### Payment gateways
 
-- **Stripe:** Stripe Connect OAuth, PaymentIntent creation, client-secret response, and signed webhook verification
-- **Razorpay:** provider credential validation, Orders API integration, and HMAC-verified webhooks
-- **Paytm:** encrypted merchant credentials, staging/production transaction initialization, and checksum signing
+- **Stripe:** Stripe Connect OAuth with one-time state, connected-account hosted Checkout, and signed Connect webhooks
+- **Razorpay:** merchant credential validation, Orders + Standard Checkout, server-side signature and capture checks, and per-merchant signed webhooks
+- **Paytm:** encrypted credentials, transaction initialization, JS Checkout, signed callback and server-to-server status verification
 - Balanced, lowest-fee, and lowest-latency routing policies
 - Provider adapter boundary so merchant requests stay stable
 
@@ -77,6 +77,8 @@ Vercel serverless API
 | `GET` | `/api/oauth/stripe/callback` | Verify OAuth state and save the connection |
 | `POST` | `/api/webhooks/stripe` | Verify and process Stripe events |
 | `POST` | `/api/webhooks/razorpay` | Verify and process Razorpay events |
+| `POST` | `/api/webhooks/paytm` | Verify Paytm callbacks against its signed Status API |
+| `POST` | `/api/payments/razorpay/verify` | Verify Checkout signature, order and captured status |
 
 ## Local setup
 
@@ -113,9 +115,11 @@ Use the first value for `SESSION_SECRET` and the second for `CREDENTIAL_ENCRYPTI
 | `STRIPE_SECRET_KEY` | Stripe OAuth | PayX platform secret key |
 | `STRIPE_CONNECT_CLIENT_ID` | Stripe OAuth | Stripe Connect platform client ID |
 | `STRIPE_WEBHOOK_SECRET` | Stripe | Webhook signing secret |
-| `RAZORPAY_WEBHOOK_SECRET` | Razorpay | Webhook HMAC secret |
+| `STRIPE_LIVE_SECRET_KEY` | Live Stripe | Live platform secret key |
+| `STRIPE_LIVE_CONNECT_CLIENT_ID` | Live Stripe | Live Connect client ID |
+| `STRIPE_LIVE_WEBHOOK_SECRET` | Live Stripe | Live Connect webhook signing secret |
 
-Optional platform fallback credential names are documented in `.env.example`. Never prefix secret values with `VITE_`; Vite exposes such values to browsers.
+Never prefix secret values with `VITE_`; Vite exposes such values to browsers. Merchant keys are entered in the authenticated Gateways page and encrypted before storage.
 
 ## Payment request
 
@@ -142,7 +146,7 @@ curl -X POST https://pay-x-six.vercel.app/api/payments \
 1. Create a Stripe Connect platform.
 2. Add the callback URL: `https://pay-x-six.vercel.app/api/oauth/stripe/callback`.
 3. Configure `STRIPE_SECRET_KEY`, `STRIPE_CONNECT_CLIENT_ID`, and `STRIPE_WEBHOOK_SECRET`.
-4. Register the webhook URL: `https://pay-x-six.vercel.app/api/webhooks/stripe`.
+4. Register a **Connect account events** webhook URL: `https://pay-x-six.vercel.app/api/webhooks/stripe`, subscribing to `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `payment_intent.succeeded`, `payment_intent.payment_failed`, and `payment_intent.processing`. Store the signing secret for the matching mode.
 5. Sign in to PayX and choose **Connect Stripe OAuth**.
 
 ### Razorpay
@@ -150,13 +154,13 @@ curl -X POST https://pay-x-six.vercel.app/api/payments \
 1. Create test keys in the Razorpay dashboard.
 2. Sign in to PayX and open **Gateways → Connect Razorpay**.
 3. PayX validates the credentials against Razorpay before encrypting them.
-4. Register `/api/webhooks/razorpay` and configure the same webhook secret in Vercel.
+4. Set a webhook secret when connecting the merchant. Register the exact URL shown in the Gateways page, which contains that connection's ID; subscribe to `payment.captured` and `payment.failed`. Each merchant owns their webhook secret.
 
 ### Paytm
 
 1. Obtain a staging MID and merchant key.
 2. Sign in to PayX and open **Gateways → Connect Paytm**.
-3. Keep `PAYX_SANDBOX_ONLY=true` during staging verification. The Paytm key is checked by Paytm on the first test transaction, not when saving it.
+3. Keep `PAYX_SANDBOX_ONLY=true` during staging verification. Paytm validates the key on the first test transaction. Its callback uses `/api/webhooks/paytm` and verifies status with Paytm before recording success.
 
 ## Quality checks
 
@@ -172,7 +176,9 @@ Tests cover routing policy behavior, request validation, password hashing, and a
 
 The repository is configured for Vercel. Import it as a Vite project and add the environment variables above. Git pushes to `main` trigger production deployments through Vercel's Git integration.
 
-The application intentionally starts in sandbox-only mode. If no test provider is connected, authenticated test requests create `simulated` ledger entries. Once a test provider is connected, test requests call its API and return its next-step token or secret; initiating a payment does not itself mean the customer has completed checkout. Provider webhooks update final transaction status. Live-mode API keys are rejected while `PAYX_SANDBOX_ONLY=true`.
+The application starts in sandbox-only mode. Anonymous and unconnected test payments are labelled `simulated`. Connected test providers open a real **test** checkout. A live checkout is possible only after setting `PAYX_SANDBOX_ONLY=false`, configuring a public HTTPS `APP_URL`, connecting approved live merchant credentials, and setting up verified webhooks. The browser return is informational; only provider verification moves a payment to `succeeded`.
+
+See [Production readiness](docs/PRODUCTION_READINESS.md) for the exact activation requirements and remaining operational work. Do not use the live switch until these requirements have been completed and a test transaction has passed for each provider.
 
 The current deployment reports `database: not_configured` at `/api/health`; its public browser sandbox works, but account registration, Stripe OAuth, and connected provider payments need a PostgreSQL `DATABASE_URL`, `APP_URL`, `SESSION_SECRET`, and `CREDENTIAL_ENCRYPTION_KEY` configured on the Vercel project. Stripe OAuth also needs the Stripe platform keys and callback URL listed above. Moving real money additionally requires provider approval, verified webhooks, monitoring, and a controlled production launch.
 

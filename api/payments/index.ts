@@ -6,7 +6,7 @@ import { createPayment, listTransactions } from "../../server/payments.js";
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   return withApi(res, async () => {
     allowMethods(req, ["GET", "POST"]);
-    const actor = await requireActor(req);
+    const actor = await requireActor(req, req.method === "POST" ? ["owner", "admin", "developer"] : undefined);
     if (req.method === "GET")
       return ok(res, {
         transactions: await listTransactions(

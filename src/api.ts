@@ -15,6 +15,14 @@ export type ConnectedGateway = {
   metadata: Record<string, unknown>;
 };
 
+export type Checkout =
+  | { kind: "redirect"; url: string }
+  | { kind: "razorpay"; keyId: string; orderId: string; amount: number; currency: string }
+  | { kind: "paytm"; merchantId: string; orderId: string; token: string; amount: string; mode: "test" | "live" };
+
+export type Mode = "test" | "live";
+const modeHeader = (mode: Mode) => ({ "X-PayX-Mode": mode });
+
 type ApiErrorBody = { error?: { code?: string; message?: string } };
 
 export class PayXApiError extends Error {
@@ -68,7 +76,7 @@ function normalizeTransaction(value: Record<string, unknown>): Transaction {
 }
 
 export const api = {
-  health: () => request<{ status: string; database: "configured" | "not_configured"; mode: string; stripeOAuth: boolean }>("/api/health"),
+  health: () => request<{ status: string; database: "configured" | "not_configured" | "unavailable"; mode: string; stripeOAuth: boolean; liveEnabled: boolean; stripeLiveOAuth: boolean }>("/api/health"),
   me: () => request<Session>("/api/auth/me"),
   register: (input: {
     name: string;
@@ -87,9 +95,9 @@ export const api = {
     }),
   logout: () =>
     request<{ signedOut: boolean }>("/api/auth/logout", { method: "POST" }),
-  transactions: async () => {
+  transactions: async (mode: Mode = "test") => {
     const result = await request<{ transactions: Record<string, unknown>[] }>(
-      "/api/payments",
+      "/api/payments", { headers: modeHeader(mode) },
     );
     return result.transactions.map(normalizeTransaction);
   },
@@ -98,14 +106,20 @@ export const api = {
     currency: string;
     routingRule: string;
     idempotencyKey: string;
+    preferredGateway?: "stripe" | "razorpay" | "paytm";
+    mode: Mode;
   }) => {
     const result = await request<{
-      transaction: Record<string, unknown>;
+      transaction: Record<string, unknown> & { checkout?: Checkout };
       duplicate: boolean;
       sandbox?: boolean;
-    }>("/api/payments", { method: "POST", body: JSON.stringify(input) });
-    return { ...result, transaction: normalizeTransaction(result.transaction) };
+    }>("/api/payments", { method: "POST", headers: modeHeader(input.mode), body: JSON.stringify(input) });
+    return { ...result, checkout: result.transaction.checkout, transaction: normalizeTransaction(result.transaction) };
   },
+  verifyRazorpay: (input: { transactionId: string; orderId: string; paymentId: string; signature: string; mode: Mode }) =>
+    request<{ status: string }>("/api/payments/razorpay/verify", {
+      method: "POST", headers: modeHeader(input.mode), body: JSON.stringify(input),
+    }),
   gateways: async () =>
     (await request<{ gateways: ConnectedGateway[] }>("/api/gateways")).gateways,
   connectGateway: (input: Record<string, unknown>) =>
@@ -113,4 +127,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     }),
+  apiKeys: async () => (await request<{ apiKeys: Array<{ id: string; name: string; prefix: string; mode: Mode; created_at: string }> }>("/api/api-keys")).apiKeys,
+  createApiKey: (name: string, mode: Mode) => request<{ apiKey: { id: string; secret: string; mode: Mode; prefix: string } }>("/api/api-keys", {
+    method: "POST", body: JSON.stringify({ name, mode }),
+  }),
+  revokeApiKey: (id: string) => request<{ revoked: boolean }>(`/api/api-keys?id=${encodeURIComponent(id)}`, { method: "DELETE" }),
 };
