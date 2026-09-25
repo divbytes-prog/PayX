@@ -23,7 +23,7 @@ const seed: Transaction[] = [
     amount: 12800,
     currency: "INR",
     gateway: "Paytm",
-    status: "succeeded",
+    status: "simulated",
     idempotencyKey: "order_10241",
     gatewayTransactionId: "paytm_81fd208e",
     routedBy: "balanced",
@@ -34,7 +34,7 @@ const seed: Transaction[] = [
     amount: 3499,
     currency: "INR",
     gateway: "Razorpay",
-    status: "succeeded",
+    status: "simulated",
     idempotencyKey: "order_10240",
     gatewayTransactionId: "razorpay_21da0de2",
     routedBy: "lowest_fee",
@@ -45,7 +45,7 @@ const seed: Transaction[] = [
     amount: 79,
     currency: "USD",
     gateway: "Stripe",
-    status: "succeeded",
+    status: "simulated",
     idempotencyKey: "sub_8812",
     gatewayTransactionId: "stripe_9c7d0bb1",
     routedBy: "balanced",
@@ -91,9 +91,11 @@ function App() {
   const [gateways, setGateways] = useState<Gateway[]>(() =>
     loadLocal("payx_gateways", defaultGateways),
   );
-  const [tx, setTx] = useState<Transaction[]>(() =>
-    loadLocal("payx_transactions", seed),
-  );
+  const [tx, setTx] = useState<Transaction[]>(() => {
+    const saved = loadLocal("payx_transactions", seed);
+    const demoIds = new Set(seed.map((item) => item.id));
+    return saved.map((item) => demoIds.has(item.id) ? { ...item, status: "simulated" } : item);
+  });
   const [toast, setToast] = useState("");
   const [session, setSession] = useState<Session | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
