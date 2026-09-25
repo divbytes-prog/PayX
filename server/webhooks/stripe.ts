@@ -1,11 +1,11 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { randomUUID } from "node:crypto";
 import Stripe from "stripe";
-import { config as appConfig } from "../../server/config.js";
-import { db, ensureSchema } from "../../server/db.js";
-import { allowMethods, ApiError, ok, withApi } from "../../server/http.js";
-import { readRawBody } from "../../server/rawBody.js";
-import { toMinorUnits } from "../../server/payments.js";
+import { config as appConfig } from "../config.js";
+import { db, ensureSchema } from "../db.js";
+import { allowMethods, ApiError, ok, withApi } from "../http.js";
+import { readRawBody } from "../rawBody.js";
+import { toMinorUnits } from "../payments.js";
 
 export const config = { api: { bodyParser: false } };
 

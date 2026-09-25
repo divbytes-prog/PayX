@@ -1,10 +1,10 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { db, ensureSchema } from "../../server/db.js";
-import { revealGatewayCredentials, type StoredGateway } from "../../server/gateways.js";
-import { allowMethods, ApiError, ok, withApi } from "../../server/http.js";
-import { toMinorUnits } from "../../server/payments.js";
-import { readRawBody } from "../../server/rawBody.js";
+import { db, ensureSchema } from "../db.js";
+import { revealGatewayCredentials, type StoredGateway } from "../gateways.js";
+import { allowMethods, ApiError, ok, withApi } from "../http.js";
+import { toMinorUnits } from "../payments.js";
+import { readRawBody } from "../rawBody.js";
 
 export const config = { api: { bodyParser: false } };
 

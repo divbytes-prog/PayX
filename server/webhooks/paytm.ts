@@ -1,11 +1,11 @@
-/// <reference path="../../server/paytmchecksum.d.ts" />
+/// <reference path="../paytmchecksum.d.ts" />
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createHash, randomUUID } from "node:crypto";
-import { config as appConfig } from "../../server/config.js";
-import { db, ensureSchema } from "../../server/db.js";
-import { allowMethods, ApiError, ok, withApi } from "../../server/http.js";
-import { readRawBody } from "../../server/rawBody.js";
-import { revealGatewayCredentials, type StoredGateway } from "../../server/gateways.js";
+import { config as appConfig } from "../config.js";
+import { db, ensureSchema } from "../db.js";
+import { allowMethods, ApiError, ok, withApi } from "../http.js";
+import { readRawBody } from "../rawBody.js";
+import { revealGatewayCredentials, type StoredGateway } from "../gateways.js";
 
 export const config = { api: { bodyParser: false } };
 
