@@ -180,7 +180,7 @@ The application starts in sandbox-only mode. Anonymous and unconnected test paym
 
 See [Production readiness](docs/PRODUCTION_READINESS.md) for the exact activation requirements and remaining operational work. Do not use the live switch until these requirements have been completed and a test transaction has passed for each provider.
 
-The current deployment reports `database: not_configured` at `/api/health`; its public browser sandbox works, but account registration, Stripe OAuth, and connected provider payments need a PostgreSQL `DATABASE_URL`, `APP_URL`, `SESSION_SECRET`, and `CREDENTIAL_ENCRYPTION_KEY` configured on the Vercel project. Stripe OAuth also needs the Stripe platform keys and callback URL listed above. Moving real money additionally requires provider approval, verified webhooks, monitoring, and a controlled production launch.
+The current deployment reports `database: configured` and `mode: sandbox` at `/api/health`. The public browser sandbox and authenticated database are available, while Stripe OAuth and live collection remain disabled until the platform keys, merchant credentials and verified webhooks are configured. Moving real money additionally requires provider approval, monitoring, and a controlled production launch.
 
 ## License
 
