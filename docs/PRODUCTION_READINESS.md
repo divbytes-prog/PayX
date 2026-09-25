@@ -29,4 +29,4 @@ PayX can initiate provider-hosted payments. Its public sandbox is only a simulat
 - Review applicable PCI scope, privacy terms, retention, taxes and payment regulations with the merchant and providers. Provider-hosted checkout keeps card entry off PayX pages; it does not replace those obligations.
 - Replace demo routing estimates with measured provider performance and merchant-specific pricing before enabling automatic multi-provider live routing. Until then, PayX requires an explicit gateway when multiple live providers are connected.
 
-The production URL currently reports `database: not_configured` and the preview reports Stripe OAuth unconfigured. Provider secrets and merchant onboarding are external requirements; this repository does not contain those credentials.
+The production URL currently reports `database: configured` and `mode: sandbox`; Stripe OAuth and live collection remain unconfigured. Provider secrets and merchant onboarding are external requirements; this repository does not contain those credentials.
