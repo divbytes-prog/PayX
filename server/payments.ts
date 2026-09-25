@@ -1,3 +1,4 @@
+/// <reference path="./paytmchecksum.d.ts" />
 import { createHash, randomUUID } from "node:crypto";
 import Stripe from "stripe";
 import { z } from "zod";
