@@ -3,7 +3,7 @@ import Stripe from "stripe";
 import { z } from "zod";
 import type { Actor } from "./auth.js";
 import { audit } from "./auth.js";
-import { config } from "./config.js";
+import { config, stripePlatform } from "./config.js";
 import { db, ensureSchema } from "./db.js";
 import { ApiError } from "./http.js";
 import { decryptCredentials, encryptCredentials } from "./security.js";
@@ -13,6 +13,7 @@ export type GatewayMode = "test" | "live";
 
 export type StoredGateway = {
   id: string;
+  organization_id: string;
   provider: Provider;
   mode: GatewayMode;
   status: "connected" | "degraded" | "disabled";
@@ -29,6 +30,7 @@ const connectionSchema = z.discriminatedUnion("provider", [
     mode: z.enum(["test", "live"]).default("test"),
     keyId: z.string().min(8).max(128),
     keySecret: z.string().min(8).max(256),
+    webhookSecret: z.string().min(12).max(256).optional(),
   }),
   z.object({
     provider: z.literal("paytm"),
@@ -87,11 +89,20 @@ export async function saveCredentialGateway(actor: Actor, input: unknown) {
       "Set PAYX_SANDBOX_ONLY=false only after live credentials and webhooks are verified",
     );
   }
+  if (parsed.provider === "razorpay") {
+    const prefix = parsed.mode === "live" ? "rzp_live_" : "rzp_test_";
+    if (!parsed.keyId.startsWith(prefix))
+      throw new ApiError(400, "INVALID_GATEWAY_MODE", `Use a ${parsed.mode} Razorpay key`);
+    if (parsed.mode === "live" && !parsed.webhookSecret)
+      throw new ApiError(400, "WEBHOOK_NOT_CONFIGURED", "A Razorpay webhook secret is required for live mode");
+  }
+  if (parsed.provider === "paytm" && parsed.mode === "live" && !config.appUrl.startsWith("https://"))
+    throw new ApiError(503, "CALLBACK_NOT_CONFIGURED", "A public HTTPS APP_URL is required for live Paytm callbacks");
   if (parsed.provider === "razorpay")
     await validateRazorpay(parsed.keyId, parsed.keySecret);
   const credentials =
     parsed.provider === "razorpay"
-      ? { keyId: parsed.keyId, keySecret: parsed.keySecret }
+      ? { keyId: parsed.keyId, keySecret: parsed.keySecret, webhookSecret: parsed.webhookSecret ?? "" }
       : {
           merchantId: parsed.merchantId,
           merchantKey: parsed.merchantKey,
@@ -130,26 +141,22 @@ export async function saveCredentialGateway(actor: Actor, input: unknown) {
   };
 }
 
-export async function saveStripeOAuthConnection(actor: Actor, code: string) {
-  if (!config.stripeSecretKey || !config.stripeConnectClientId) {
-    throw new ApiError(
-      503,
-      "STRIPE_CONNECT_NOT_CONFIGURED",
-      "Stripe Connect platform credentials are missing",
-    );
-  }
-  const stripe = new Stripe(config.stripeSecretKey);
+export async function saveStripeOAuthConnection(actor: Actor, code: string, requestedMode: GatewayMode) {
+  const platform = stripePlatform(requestedMode);
+  const stripe = new Stripe(platform.secretKey);
   const token = await stripe.oauth.token({
     grant_type: "authorization_code",
     code,
   });
-  if (!token.stripe_user_id || !token.access_token)
+  if (!token.stripe_user_id)
     throw new ApiError(
       502,
       "STRIPE_OAUTH_FAILED",
       "Stripe did not return a connected account",
     );
   const mode: GatewayMode = token.livemode ? "live" : "test";
+  if (mode !== requestedMode)
+    throw new ApiError(400, "INVALID_GATEWAY_MODE", "Stripe returned a different account mode");
   if (mode === "live" && config.sandboxOnly)
     throw new ApiError(
       409,
@@ -158,19 +165,14 @@ export async function saveStripeOAuthConnection(actor: Actor, code: string) {
     );
   const sql = db();
   const id = `gw_${randomUUID()}`;
-  const encrypted = encryptCredentials({
-    accessToken: token.access_token,
-    refreshToken: token.refresh_token,
-  });
   const metadata = {
     scope: token.scope ?? "read_write",
-    stripePublishableKey: token.stripe_publishable_key ?? null,
   };
   await sql`INSERT INTO gateway_connections
       (id, organization_id, provider, mode, status, encrypted_credentials, provider_account_id, metadata)
-    VALUES (${id}, ${actor.organizationId}, 'stripe', ${mode}, 'connected', ${encrypted}, ${token.stripe_user_id}, ${sql.json(metadata)})
+    VALUES (${id}, ${actor.organizationId}, 'stripe', ${mode}, 'connected', ${null}, ${token.stripe_user_id}, ${sql.json(metadata)})
     ON CONFLICT (organization_id, provider, mode) DO UPDATE SET
-      status = 'connected', encrypted_credentials = EXCLUDED.encrypted_credentials,
+      status = 'connected', encrypted_credentials = NULL,
       provider_account_id = EXCLUDED.provider_account_id, metadata = EXCLUDED.metadata, updated_at = NOW()`;
   await audit(actor, "gateway.connected", "gateway_connection", id, {
     provider: "stripe",

@@ -1,6 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { randomUUID } from "node:crypto";
 import { db, ensureSchema } from "./db.js";
+import { config } from "./config.js";
 import { ApiError, cookieValue } from "./http.js";
 import { createOpaqueToken, hashToken } from "./security.js";
 
@@ -67,6 +68,8 @@ export async function requireActor(
       LIMIT 1`;
     const key = rows[0];
     if (!key) throw new ApiError(401, "UNAUTHORIZED", "Invalid API key");
+    if (key.mode === "live" && config.sandboxOnly)
+      throw new ApiError(409, "SANDBOX_ONLY", "Live API keys are disabled");
     void sql`UPDATE api_keys SET last_used_at = NOW() WHERE key_hash = ${hashToken(bearer)}`;
     const actor: Actor = {
       userId: key.created_by,
@@ -82,6 +85,12 @@ export async function requireActor(
 
   const token = cookieValue(req, "payx_session");
   if (!token) throw new ApiError(401, "UNAUTHORIZED", "Sign in required");
+  if (!["GET", "HEAD", "OPTIONS"].includes(req.method ?? "")) {
+    const origin = req.headers.origin;
+    const host = req.headers.host;
+    if (!origin || !host || !URL.canParse(origin) || new URL(origin).host !== host)
+      throw new ApiError(403, "INVALID_ORIGIN", "Payment requests must come from this site");
+  }
   const rows = await sql<
     [{ user_id: string; organization_id: string; role: Actor["role"] }]
   >`
@@ -96,9 +105,11 @@ export async function requireActor(
     userId: session.user_id,
     organizationId: session.organization_id,
     role: session.role,
-    mode: "test",
+    mode: req.headers["x-payx-mode"] === "live" ? "live" : "test",
     authType: "session",
   };
+  if (actor.mode === "live" && (config.sandboxOnly || !["owner", "admin"].includes(actor.role)))
+    throw new ApiError(403, "LIVE_NOT_ALLOWED", "Live payments require an owner or admin and enabled live mode");
   if (roles && !roles.includes(actor.role))
     throw new ApiError(403, "FORBIDDEN", "Insufficient role");
   return actor;

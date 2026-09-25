@@ -7,9 +7,19 @@ export const config = {
     (process.env.PAYX_SANDBOX_ONLY ?? "true").toLowerCase() !== "false",
   stripeSecretKey: process.env.STRIPE_SECRET_KEY ?? "",
   stripeConnectClientId: process.env.STRIPE_CONNECT_CLIENT_ID ?? "",
+  stripeLiveSecretKey: process.env.STRIPE_LIVE_SECRET_KEY ?? "",
+  stripeLiveConnectClientId: process.env.STRIPE_LIVE_CONNECT_CLIENT_ID ?? "",
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? "",
-  razorpayWebhookSecret: process.env.RAZORPAY_WEBHOOK_SECRET ?? "",
+  stripeLiveWebhookSecret: process.env.STRIPE_LIVE_WEBHOOK_SECRET ?? "",
 };
+
+export function stripePlatform(mode: "test" | "live") {
+  const secretKey = mode === "live" ? config.stripeLiveSecretKey : config.stripeSecretKey;
+  const clientId = mode === "live" ? config.stripeLiveConnectClientId : config.stripeConnectClientId;
+  if (!secretKey.startsWith(mode === "live" ? "sk_live_" : "sk_test_") || !clientId)
+    throw new ConfigurationError(`Stripe ${mode} Connect credentials are not configured`);
+  return { secretKey, clientId };
+}
 
 export class ConfigurationError extends Error {
   constructor(message: string) {

@@ -5,6 +5,7 @@ import { audit, requireActor } from "../../server/auth.js";
 import { db } from "../../server/db.js";
 import { allowMethods, ApiError, ok, withApi } from "../../server/http.js";
 import { createOpaqueToken, hashToken } from "../../server/security.js";
+import { config } from "../../server/config.js";
 
 const createSchema = z.object({
   name: z.string().trim().min(2).max(80),
@@ -35,6 +36,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return ok(res, { revoked: true });
     }
     const input = createSchema.parse(req.body);
+    if (input.mode === "live" && config.sandboxOnly)
+      throw new ApiError(409, "SANDBOX_ONLY", "Live API keys are disabled on this deployment");
     const token = createOpaqueToken(
       input.mode === "live" ? "px_live_" : "px_test_",
     );

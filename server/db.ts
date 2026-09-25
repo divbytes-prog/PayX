@@ -52,6 +52,18 @@ export async function ensureSchema() {
       expires_at TIMESTAMPTZ NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`;
+    await sql`CREATE TABLE IF NOT EXISTS login_attempts (
+      attempt_key TEXT PRIMARY KEY,
+      failures INTEGER NOT NULL DEFAULT 0,
+      window_start TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`;
+    await sql`CREATE TABLE IF NOT EXISTS oauth_states (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      expires_at TIMESTAMPTZ NOT NULL
+    )`;
     await sql`CREATE TABLE IF NOT EXISTS api_keys (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -91,12 +103,18 @@ export async function ensureSchema() {
       failure_code TEXT,
       failure_message TEXT,
       metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      request_fingerprint TEXT,
+      checkout_data JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (organization_id, idempotency_key)
     )`;
+    await sql`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS request_fingerprint TEXT`;
+    await sql`ALTER TABLE transactions ADD COLUMN IF NOT EXISTS checkout_data JSONB NOT NULL DEFAULT '{}'::jsonb`;
     await sql`CREATE INDEX IF NOT EXISTS transactions_org_created_idx
       ON transactions (organization_id, created_at DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS transactions_provider_payment_idx
+      ON transactions (provider, provider_payment_id)`;
     await sql`CREATE TABLE IF NOT EXISTS webhook_events (
       id TEXT PRIMARY KEY,
       provider TEXT NOT NULL,
