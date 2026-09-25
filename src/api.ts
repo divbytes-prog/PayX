@@ -68,6 +68,7 @@ function normalizeTransaction(value: Record<string, unknown>): Transaction {
 }
 
 export const api = {
+  health: () => request<{ status: string; database: "configured" | "not_configured"; mode: string; stripeOAuth: boolean }>("/api/health"),
   me: () => request<Session>("/api/auth/me"),
   register: (input: {
     name: string;

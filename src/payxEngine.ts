@@ -16,6 +16,7 @@ export type Transaction = {
   gateway: string;
   status:
     | "created"
+    | "simulated"
     | "requires_payment_method"
     | "requires_action"
     | "processing"
@@ -96,7 +97,7 @@ export function simulatePayment(params: {
       amount: params.amount,
       currency: params.currency,
       gateway: gateway?.name ?? "No route",
-      status: failed ? "failed" : "succeeded",
+      status: failed ? "failed" : "simulated",
       idempotencyKey: params.idempotencyKey,
       gatewayTransactionId: failed
         ? "—"

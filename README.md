@@ -4,7 +4,7 @@ PayX is a multi-tenant payment orchestration platform and portfolio project. It 
 
 **Live app:** https://pay-x-six.vercel.app/
 
-The public experience includes an anonymous browser sandbox. After the backend environment variables are configured, users can create an authenticated workspace with persistent transactions, encrypted gateway connections, API keys, and signed webhook updates.
+The public experience includes an anonymous browser sandbox at [`#sandbox`](https://pay-x-six.vercel.app/#sandbox). It works without credentials and marks new payments as `simulated`. After the backend environment variables are configured, users can create an authenticated workspace with persistent transactions, encrypted gateway connections, API keys, and signed webhook updates.
 
 ## Implemented features
 
@@ -31,7 +31,7 @@ The public experience includes an anonymous browser sandbox. After the backend e
 - Audit logs for security-sensitive actions
 - AES-256-GCM encryption for merchant gateway credentials
 - Normalized transaction records and provider errors
-- Sandbox safety switch that blocks live gateway use by default
+- Sandbox safety switch that blocks live gateway use by default; connected test accounts can still initiate provider test payments
 
 ### Payment gateways
 
@@ -156,7 +156,7 @@ curl -X POST https://pay-x-six.vercel.app/api/payments \
 
 1. Obtain a staging MID and merchant key.
 2. Sign in to PayX and open **Gateways → Connect Paytm**.
-3. Keep `PAYX_SANDBOX_ONLY=true` during staging verification.
+3. Keep `PAYX_SANDBOX_ONLY=true` during staging verification. The Paytm key is checked by Paytm on the first test transaction, not when saving it.
 
 ## Quality checks
 
@@ -172,7 +172,9 @@ Tests cover routing policy behavior, request validation, password hashing, and a
 
 The repository is configured for Vercel. Import it as a Vite project and add the environment variables above. Git pushes to `main` trigger production deployments through Vercel's Git integration.
 
-The application intentionally starts in sandbox-only mode. Moving real money also requires provider account approval, test-mode validation, webhook registration, operational monitoring, PCI scope review, legal terms, and a controlled production launch. Code alone cannot grant those external approvals.
+The application intentionally starts in sandbox-only mode. If no test provider is connected, authenticated test requests create `simulated` ledger entries. Once a test provider is connected, test requests call its API and return its next-step token or secret; initiating a payment does not itself mean the customer has completed checkout. Provider webhooks update final transaction status. Live-mode API keys are rejected while `PAYX_SANDBOX_ONLY=true`.
+
+The current deployment reports `database: not_configured` at `/api/health`; its public browser sandbox works, but account registration, Stripe OAuth, and connected provider payments need a PostgreSQL `DATABASE_URL`, `APP_URL`, `SESSION_SECRET`, and `CREDENTIAL_ENCRYPTION_KEY` configured on the Vercel project. Stripe OAuth also needs the Stripe platform keys and callback URL listed above. Moving real money additionally requires provider approval, verified webhooks, monitoring, and a controlled production launch.
 
 ## License
 

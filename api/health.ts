@@ -9,6 +9,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       status: "ok",
       service: "payx-api",
       database: config.databaseUrl ? "configured" : "not_configured",
+      stripeOAuth: Boolean(config.stripeSecretKey && config.stripeConnectClientId && config.sessionSecret && config.encryptionKey),
       mode: config.sandboxOnly ? "sandbox" : "live_enabled",
       timestamp: new Date().toISOString(),
     });

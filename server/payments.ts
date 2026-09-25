@@ -41,7 +41,8 @@ export function selectProvider(
   providers: Provider[],
   rule: z.infer<typeof paymentSchema>["routingRule"],
 ): Provider {
-  if (!providers.length) return "stripe";
+  if (!providers.length)
+    throw new ApiError(409, "GATEWAY_NOT_CONFIGURED", "Connect a test gateway before creating a provider payment");
   const sorted = [...providers].sort((left, right) => {
     const a = providerProfile[left];
     const b = providerProfile[right];
@@ -245,12 +246,14 @@ export async function createPayment(actor: Actor, inputValue: unknown) {
   const connections = await sql<{ provider: Provider }[]>`
     SELECT provider FROM gateway_connections WHERE organization_id = ${actor.organizationId}
       AND mode = ${actor.mode} AND status = 'connected'`;
-  const provider = selectProvider(
-    connections.map((row) => row.provider),
-    input.routingRule,
-  );
+  if (actor.mode === "live" && config.sandboxOnly)
+    throw new ApiError(409, "SANDBOX_ONLY", "Live payments are disabled");
+  const isSimulation = config.sandboxOnly && connections.length === 0 && actor.mode === "test";
+  const provider = isSimulation
+    ? "stripe"
+    : selectProvider(connections.map((row) => row.provider), input.routingRule);
   const id = `px_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
-  const initialStatus = config.sandboxOnly ? "succeeded" : "created";
+  const initialStatus = isSimulation ? "simulated" : "created";
   const inserted = await sql<Record<string, unknown>[]>`
     INSERT INTO transactions
       (id, organization_id, amount, currency, status, provider, idempotency_key, routing_rule, mode, metadata)
@@ -265,7 +268,7 @@ export async function createPayment(actor: Actor, inputValue: unknown) {
     return { transaction: normalized(duplicate[0]), duplicate: true };
   }
 
-  if (config.sandboxOnly) {
+  if (isSimulation) {
     const providerId = `${provider}_test_${randomUUID().slice(0, 8)}`;
     const rows = await sql<Record<string, unknown>[]>`
       UPDATE transactions SET provider_payment_id = ${providerId}, updated_at = NOW()
@@ -273,11 +276,13 @@ export async function createPayment(actor: Actor, inputValue: unknown) {
     await audit(actor, "payment.created", "transaction", id, {
       provider,
       sandbox: true,
+      simulated: true,
     });
     return {
       transaction: normalized(rows[0]),
       duplicate: false,
       sandbox: true,
+      simulated: true,
     };
   }
 

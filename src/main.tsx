@@ -10,6 +10,11 @@ import {
 import { api, PayXApiError, type ConnectedGateway, type Session } from "./api";
 
 type View = "overview" | "dashboard" | "gateways" | "docs";
+const viewFromHash = (): View => {
+  const route = window.location.hash.slice(1);
+  return route === "sandbox" || route === "dashboard" ? "dashboard"
+    : route === "gateways" || route === "docs" ? route : "overview";
+};
 
 const seed: Transaction[] = [
   {
@@ -70,7 +75,19 @@ function loadLocal<T>(key: string, fallback: T): T {
 }
 
 function App() {
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>(viewFromHash);
+  const [backendReady, setBackendReady] = useState(false);
+  const [stripeOAuthReady, setStripeOAuthReady] = useState(false);
+  const go = (next: View) => {
+    window.location.hash = next === "dashboard" ? "sandbox" : next;
+    setView(next);
+    window.scrollTo({ top: 0, behavior: "instant" });
+  };
+  useEffect(() => {
+    const sync = () => setView(viewFromHash());
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
   const [gateways, setGateways] = useState<Gateway[]>(() =>
     loadLocal("payx_gateways", defaultGateways),
   );
@@ -98,11 +115,20 @@ function App() {
     return () => clearTimeout(t);
   }, [toast]);
   useEffect(() => {
-    api
-      .me()
-      .then(setSession)
-      .catch(() => {})
-      .finally(() => setAuthChecked(true));
+    api.health().then(async (health) => {
+      setStripeOAuthReady(health.stripeOAuth);
+      if (health.database !== "configured") return;
+      setBackendReady(true);
+      await api.me().then(setSession).catch(() => {});
+    }).catch(() => {}).finally(() => setAuthChecked(true));
+  }, []);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("gateway") === "stripe" && params.get("connected") === "true") {
+      go("gateways");
+      setToast("Stripe account connected");
+      window.history.replaceState(null, "", `${window.location.pathname}#gateways`);
+    }
   }, []);
   const refreshCloud = useCallback(async () => {
     if (!session) return;
@@ -135,7 +161,7 @@ function App() {
   return (
     <div className="app">
       <header className="nav">
-        <button className="brand" onClick={() => setView("overview")}>
+        <button className="brand" onClick={() => go("overview")}>
           <span>PX</span> PayX
         </button>
         <div className="navlinks">
@@ -144,7 +170,7 @@ function App() {
               <button
                 key={v}
                 className={view === v ? "active" : ""}
-                onClick={() => setView(v)}
+                onClick={() => go(v)}
               >
                 {v === "docs" ? "API Docs" : v[0].toUpperCase() + v.slice(1)}
               </button>
@@ -152,7 +178,7 @@ function App() {
           )}
         </div>
         <div className="navActions">
-          <button className="cta" onClick={() => setView("dashboard")}>
+          <button className="cta" onClick={() => go("dashboard")}>
             {session ? "Open dashboard" : "Open sandbox"}
           </button>
           {authChecked &&
@@ -168,7 +194,7 @@ function App() {
         </div>
       </header>
 
-      {view === "overview" && <Overview gateways={gateways} go={setView} />}
+      {view === "overview" && <Overview gateways={gateways} go={go} />}
       {view === "dashboard" && (
         <Dashboard
           gateways={gateways}
@@ -177,6 +203,7 @@ function App() {
           notify={setToast}
           session={session}
           onAuth={() => setAuthOpen(true)}
+          backendReady={backendReady}
         />
       )}
       {view === "gateways" && (
@@ -188,6 +215,8 @@ function App() {
           connected={connectedGateways}
           onAuth={() => setAuthOpen(true)}
           onRefresh={refreshCloud}
+          backendReady={backendReady}
+          stripeOAuthReady={stripeOAuthReady}
         />
       )}
       {view === "docs" && <Docs />}
@@ -203,7 +232,7 @@ function App() {
       </footer>
       {toast && <div className="toast">{toast}</div>}
       {authOpen && (
-        <AuthModal onClose={() => setAuthOpen(false)} onSuccess={signedIn} />
+        <AuthModal onClose={() => setAuthOpen(false)} onSuccess={signedIn} backendReady={backendReady} />
       )}
     </div>
   );
@@ -489,6 +518,7 @@ function Dashboard({
   notify,
   session,
   onAuth,
+  backendReady,
 }: {
   gateways: Gateway[];
   tx: Transaction[];
@@ -496,6 +526,7 @@ function Dashboard({
   notify: (s: string) => void;
   session: Session | null;
   onAuth: () => void;
+  backendReady: boolean;
 }) {
   const [amount, setAmount] = useState(1000),
     [currency, setCurrency] = useState("INR"),
@@ -510,7 +541,7 @@ function Dashboard({
   const enabled = gateways.filter((g) => g.enabled && g.status !== "offline");
   const success = tx.length
     ? Math.round(
-        (tx.filter((t) => t.status === "succeeded").length / tx.length) * 100,
+    (tx.filter((t) => t.status === "succeeded" || t.status === "simulated").length / tx.length) * 100,
       )
     : 0;
   const volume = tx.reduce(
@@ -572,14 +603,14 @@ function Dashboard({
           <p>
             {session
               ? `Persistent workspace for ${session.organization.name}. Payments are authenticated, idempotent and audit logged.`
-              : "Create sandbox payments, change routing rules and watch PayX normalize the result."}
+              : "Create simulated payments, change routing rules and see the result. No account or payment details needed."}
           </p>
         </div>
         <span className="live">
-          ● {session ? "backend connected" : "sandbox operational"}
+          ● {session ? "backend connected" : "browser sandbox ready"}
         </span>
       </div>
-      {!session && (
+      {!session && backendReady && (
         <div className="saasNotice">
           <div>
             <b>Want persistent transactions and gateway connections?</b>
@@ -591,10 +622,13 @@ function Dashboard({
           <button onClick={onAuth}>Create workspace</button>
         </div>
       )}
+      {!session && !backendReady && (
+        <div className="saasNotice"><div><b>Browser sandbox is ready.</b><span>Workspace sign in and provider connections will be available when the deployment database is configured.</span></div></div>
+      )}
       <div className="metrics">
-        <Metric l="Sandbox volume" v={money(volume, "INR")} />
+        <Metric l={session ? "INR volume" : "Demo volume"} v={money(volume, "INR")} />
         <Metric l="Transactions" v={String(tx.length)} />
-        <Metric l="Success rate" v={success + "%"} />
+        <Metric l={session ? "Success rate" : "Simulation completion"} v={success + "%"} />
         <Metric l="Eligible gateways" v={String(enabled.length)} />
       </div>
       <div className="dashGrid">
@@ -645,6 +679,9 @@ function Dashboard({
               Retry the exact same key to verify duplicate protection.
             </small>
           </label>
+          <button className="secondary newKey" onClick={() => setKey(`order_${crypto.randomUUID().slice(0, 12)}`)}>
+            Generate new key
+          </button>
           <button className="primary wide" onClick={run} disabled={busy}>
             {busy ? "Processing…" : "Create payment"}
           </button>
@@ -696,15 +733,16 @@ function Dashboard({
             <small>CENTRAL LEDGER</small>
             <h2>Recent transactions</h2>
           </div>
-          <button
+          {!session && <button
             className="secondary"
             onClick={() => {
               setTx(seed);
+              setLast(null);
               notify("Sandbox reset");
             }}
           >
             Reset demo
-          </button>
+          </button>}
         </div>
         <TransactionTable data={tx} />
       </section>
@@ -769,6 +807,8 @@ function GatewayPage({
   connected,
   onAuth,
   onRefresh,
+  backendReady,
+  stripeOAuthReady,
 }: {
   gateways: Gateway[];
   setGateways: (g: Gateway[]) => void;
@@ -777,13 +817,15 @@ function GatewayPage({
   connected: ConnectedGateway[];
   onAuth: () => void;
   onRefresh: () => Promise<void>;
+  backendReady: boolean;
+  stripeOAuthReady: boolean;
 }) {
   const update = (id: string, p: Partial<Gateway>) =>
     setGateways(gateways.map((g) => (g.id === id ? { ...g, ...p } : g)));
   const [configure, setConfigure] = useState<"razorpay" | "paytm" | null>(null);
   const isConnected = (provider: string) =>
     connected.some(
-      (item) => item.provider === provider && item.status === "connected",
+      (item) => item.provider === provider && item.mode === "test" && item.status === "connected",
     );
   return (
     <main className="wrap page">
@@ -798,7 +840,7 @@ function GatewayPage({
           </p>
         </div>
       </div>
-      {!session && (
+      {!session && backendReady && (
         <div className="saasNotice">
           <div>
             <b>Gateway credentials require an authenticated workspace.</b>
@@ -808,6 +850,9 @@ function GatewayPage({
           </div>
           <button onClick={onAuth}>Sign in to connect</button>
         </div>
+      )}
+      {!session && !backendReady && (
+        <div className="saasNotice"><div><b>Gateway connection requires a configured workspace.</b><span>You can still change gateway health in the browser sandbox.</span></div></div>
       )}
       <div className="gatewayCards">
         {gateways.map((g) => (
@@ -866,22 +911,20 @@ function GatewayPage({
               </small>
               <code>
                 {isConnected(g.id)
-                  ? "encrypted · verified"
+                  ? "encrypted · connected"
                   : "••••••••••••••••"}
               </code>
               <span>
                 {isConnected(g.id)
-                  ? "Ready for authenticated API routing"
+                  ? "Test gateway available for authenticated API routing"
                   : "Secrets are never exposed in the client"}
               </span>
             </div>
             {session &&
               (g.id === "stripe" ? (
-                <a className="gatewayConnect" href="/api/oauth/stripe">
-                  {isConnected("stripe")
-                    ? "Reconnect Stripe"
-                    : "Connect Stripe OAuth"}
-                </a>
+                stripeOAuthReady ? <a className="gatewayConnect" href="/api/oauth/stripe">
+                  {isConnected("stripe") ? "Reconnect Stripe" : "Connect Stripe OAuth"}
+                </a> : <p className="muted">Stripe OAuth needs platform credentials on this deployment.</p>
               ) : (
                 <button
                   className="gatewayConnect"
@@ -1153,9 +1196,11 @@ function Docs() {
 function AuthModal({
   onClose,
   onSuccess,
+  backendReady,
 }: {
   onClose: () => void;
   onSuccess: (session: Session) => void;
+  backendReady: boolean;
 }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [values, setValues] = useState({
@@ -1214,7 +1259,8 @@ function AuthModal({
         <p className="kicker">PAYX WORKSPACE</p>
         <h2>{mode === "login" ? "Welcome back." : "Create your workspace."}</h2>
         <p>
-          {mode === "login"
+          {!backendReady ? "Workspace accounts are currently unavailable. The browser sandbox works without an account."
+            : mode === "login"
             ? "Sign in to access persistent transactions and connected gateways."
             : "Start with an isolated organization, owner role and secure session."}
         </p>
@@ -1292,7 +1338,7 @@ function AuthModal({
             )}
           </label>
           {error && <p className="formError">{error}</p>}
-          <button className="primary wide" disabled={busy}>
+          <button className="primary wide" disabled={busy || !backendReady}>
             {busy
               ? "Please wait…"
               : mode === "login"

@@ -124,6 +124,9 @@ button {
   border: 1px solid var(--line);
   color: white;
 }
+.newKey {
+  margin: 0 0 16px;
+}
 .wrap {
   width: min(1180px, calc(100% - 40px));
   margin: auto;
@@ -582,7 +585,8 @@ button {
   border: 1px solid var(--line);
   border-radius: 10px;
 }
-.result.succeeded {
+.result.succeeded,
+.result.simulated {
   border-color: rgba(107, 227, 157, 0.35);
 }
 .result > small,
@@ -678,7 +682,8 @@ td small {
   border-radius: 999px;
   font: 9px "DM Mono";
 }
-.status.succeeded {
+.status.succeeded,
+.status.simulated {
   color: var(--green);
   background: rgba(107, 227, 157, 0.12);
 }
