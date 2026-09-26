@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Actor } from "./auth.js";
 import { audit } from "./auth.js";
 import { config, stripePlatform } from "./config.js";
+import { checkoutExpiresAt, checkoutToken, checkoutUrl } from "./checkoutLink.js";
 import { db, ensureSchema } from "./db.js";
 import { ApiError } from "./http.js";
 import {
@@ -85,6 +86,10 @@ function normalized(
     routedBy: row.routing_rule,
     mode: row.mode,
     createdAt: row.created_at,
+    ...(row.status !== "simulated" && (row.checkout_data as { kind?: string } | null)?.kind
+      ? { checkoutUrl: checkoutUrl(String(row.id), row.mode as "test" | "live"),
+          checkoutExpiresAt: checkoutExpiresAt(row.created_at as Date, String(row.provider)) }
+      : {}),
     ...extra,
   };
 }
@@ -133,7 +138,7 @@ async function runStripe(
   if (!gateway.provider_account_id)
     throw new ApiError(409, "GATEWAY_NOT_CONFIGURED", "Stripe account ID is missing");
   const stripe = new Stripe(stripePlatform(gateway.mode).secretKey);
-  const redirect = `${config.appUrl}/?payment=${encodeURIComponent(transactionId)}&mode=${gateway.mode}#dashboard`;
+  const redirect = checkoutUrl(transactionId, gateway.mode);
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
     client_reference_id: transactionId,
@@ -293,6 +298,7 @@ export async function createPayment(actor: Actor, inputValue: unknown) {
   if (provider === "paytm" && input.currency !== "INR")
     throw new ApiError(400, "UNSUPPORTED_CURRENCY", "Paytm checkout currently accepts INR only");
   const id = `px_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+  if (!isSimulation) checkoutToken(id, actor.mode);
   const initialStatus = isSimulation ? "simulated" : "created";
   const inserted = await sql<Record<string, unknown>[]>`
     INSERT INTO transactions

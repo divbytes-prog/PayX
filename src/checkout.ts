@@ -1,14 +1,9 @@
-import type { Checkout, Mode } from "./api";
+import type { Checkout } from "./api";
 import { api } from "./api";
 
 declare global {
   interface Window {
     Razorpay?: new (options: Record<string, unknown>) => { open(): void };
-    Paytm?: { CheckoutJS?: {
-      onLoad(callback: () => void): void;
-      init(options: Record<string, unknown>): Promise<void>;
-      invoke(): void;
-    } };
   }
 }
 
@@ -28,7 +23,7 @@ function loadScript(src: string) {
   });
 }
 
-export async function openCheckout(checkout: Checkout, transactionId: string, mode: Mode, onStatus: (status: string) => void) {
+export async function openCheckout(checkout: Checkout, token: string, onStatus: (status: string) => void) {
   if (checkout.kind === "redirect") {
     const url = new URL(checkout.url);
     if (url.protocol !== "https:" || url.hostname !== "checkout.stripe.com")
@@ -48,9 +43,9 @@ export async function openCheckout(checkout: Checkout, transactionId: string, mo
       handler: async (response: Record<string, string>) => {
         try {
           const verified = await api.verifyRazorpay({
-            transactionId, orderId: response.razorpay_order_id,
+            token, orderId: response.razorpay_order_id,
             paymentId: response.razorpay_payment_id,
-            signature: response.razorpay_signature, mode,
+            signature: response.razorpay_signature,
           });
           onStatus(verified.status === "succeeded" ? "Payment confirmed by Razorpay" : "Payment processing; awaiting capture");
         } catch (error) {
@@ -63,18 +58,22 @@ export async function openCheckout(checkout: Checkout, transactionId: string, mo
   }
   if (!/^[a-zA-Z0-9_-]{4,64}$/.test(checkout.merchantId))
     throw new Error("Invalid Paytm merchant ID");
+  if (!/^px_[a-f0-9]{20}$/.test(checkout.orderId) || !checkout.token)
+    throw new Error("Invalid Paytm order details");
   const host = checkout.mode === "live" ? "https://secure.paytmpayments.com" : "https://securestage.paytmpayments.com";
-  await loadScript(`${host}/merchantpgpui/checkoutjs/merchants/${encodeURIComponent(checkout.merchantId)}.js`);
-  const widget = window.Paytm?.CheckoutJS;
-  if (!widget) throw new Error("Paytm Checkout is unavailable");
-  await new Promise<void>((resolve, reject) => {
-    widget.onLoad(() => {
-      widget.init({
-        root: "", flow: "DEFAULT",
-        data: { orderId: checkout.orderId, token: checkout.token,
-          tokenType: "TXN_TOKEN", amount: checkout.amount },
-        handler: { notifyMerchant: () => onStatus("Paytm checkout updated; awaiting verified status") },
-      }).then(() => { widget.invoke(); resolve(); }).catch(reject);
-    });
-  });
+  const action = new URL("/theia/api/v1/showPaymentPage", host);
+  action.searchParams.set("mid", checkout.merchantId);
+  action.searchParams.set("orderId", checkout.orderId);
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = action.href;
+  for (const [name, value] of Object.entries({ mid: checkout.merchantId, orderId: checkout.orderId, txnToken: checkout.token })) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = value;
+    form.append(input);
+  }
+  document.body.append(form);
+  form.submit();
 }

@@ -16,6 +16,7 @@ The public experience includes an anonymous browser sandbox at [`#sandbox`](http
 - Authenticated SaaS workspace backed by PostgreSQL
 - Gateway health and routing configuration UI
 - Central transaction ledger
+- Shareable customer checkout links with provider-specific payment handoff
 - Developer-facing API documentation
 
 ### SaaS backend
@@ -71,6 +72,7 @@ Vercel serverless API
 | `POST` | `/api/auth/logout` | Revoke the current session |
 | `GET` | `/api/auth/me` | Return the authenticated user and workspace |
 | `GET/POST` | `/api/payments` | List or create idempotent payments |
+| `GET/POST` | `/api/checkout` | Read a signed customer payment link or verify a Razorpay checkout callback |
 | `GET/POST` | `/api/gateways` | List or connect encrypted gateway credentials |
 | `GET/POST/DELETE` | `/api/api-keys` | Manage workspace API keys |
 | `GET` | `/api/oauth/stripe` | Start Stripe Connect OAuth |
@@ -78,7 +80,6 @@ Vercel serverless API
 | `POST` | `/api/webhooks/stripe` | Verify and process Stripe events |
 | `POST` | `/api/webhooks/razorpay` | Verify and process Razorpay events |
 | `POST` | `/api/webhooks/paytm` | Verify Paytm callbacks against its signed Status API |
-| `POST` | `/api/payments/razorpay/verify` | Verify Checkout signature, order and captured status |
 
 ## Local setup
 
@@ -138,6 +139,8 @@ curl -X POST https://pay-x-six.vercel.app/api/payments \
 ```
 
 `amount` uses major currency units in the PayX contract. Provider adapters convert to provider-specific minor units where required.
+
+The response includes `transaction.checkoutUrl` when a connected provider is used. Give this link to the customer. The customer sees the merchant, amount and provider without signing in to PayX, then chooses **Continue to provider**. Stripe opens hosted Stripe Checkout. Paytm redirects to its payment page and may show its app/UPI options on a mobile device. Razorpay Standard Checkout can hand off to an installed UPI app on mobile, depending on the merchant's enabled payment methods. Provider sign-in, account selection and payment authorization happen with that provider; PayX never requests the customer's provider password or UPI PIN. A return to PayX alone does not mark a payment successful: the app waits for verified provider status. The checkout link expires after 14 minutes for Paytm and after 24 hours for Stripe/Razorpay; create a new payment with a new idempotency key after expiry.
 
 ## Gateway setup
 

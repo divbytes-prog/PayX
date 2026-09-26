@@ -7,12 +7,13 @@ import {
   type Gateway,
   type Transaction,
 } from "./payxEngine";
-import { api, PayXApiError, type ConnectedGateway, type Mode, type Session } from "./api";
+import { api, PayXApiError, type ConnectedGateway, type Mode, type PublicCheckout, type Session } from "./api";
 import { openCheckout } from "./checkout";
 
-type View = "overview" | "dashboard" | "gateways" | "keys" | "docs";
+type View = "overview" | "dashboard" | "gateways" | "keys" | "docs" | "pay";
 const viewFromHash = (): View => {
   const route = window.location.hash.slice(1);
+  if (route === "pay" && new URLSearchParams(window.location.search).has("checkout")) return "pay";
   return route === "sandbox" || route === "dashboard" ? "dashboard"
     : route === "gateways" || route === "keys" || route === "docs" ? route : "overview";
 };
@@ -176,6 +177,12 @@ function App() {
     setToast("Signed out");
   };
 
+  if (view === "pay") return <div className="app">
+    <header className="nav"><a className="brand" href="/"><span>PX</span> PayX</a></header>
+    <CustomerCheckout token={new URLSearchParams(window.location.search).get("checkout") ?? ""} />
+    <footer><small>Provider checkout · verified payment status</small></footer>
+  </div>;
+
   return (
     <div className="app">
       <header className="nav">
@@ -261,6 +268,59 @@ function App() {
       )}
     </div>
   );
+}
+
+function CustomerCheckout({ token }: { token: string }) {
+  const [payment, setPayment] = useState<PublicCheckout | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const refresh = useCallback(() => api.publicCheckout(token).then(setPayment), [token]);
+  useEffect(() => {
+    let active = true;
+    api.publicCheckout(token).then((data) => { if (active) setPayment(data); })
+      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "Payment link unavailable"); });
+    const timer = window.setInterval(() => {
+      api.publicCheckout(token).then((data) => { if (active) setPayment(data); }).catch(() => {});
+    }, 5000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [token]);
+  const pay = async () => {
+    if (!payment?.checkout) return;
+    setBusy(true); setError("");
+    try {
+      await openCheckout(payment.checkout, token, (message) => {
+        setNotice(message);
+        void refresh().catch(() => {});
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to open provider checkout");
+    } finally { setBusy(false); }
+  };
+  const provider = payment?.provider === "paytm" ? "Paytm" : payment?.provider === "razorpay" ? "Razorpay" : "Stripe";
+  return <main className="wrap page payerPage">
+    <div className="panel payerCard">
+      <p className="kicker">SECURE PROVIDER CHECKOUT</p>
+      <h1>{payment ? `Pay ${payment.merchant}` : "Payment checkout"}</h1>
+      {!payment && !error && <p>Loading payment details…</p>}
+      {payment && <>
+        <p className="payerAmount">{money(payment.amount, payment.currency)}</p>
+        <p>Provider: <b>{provider}</b> · {payment.mode === "live" ? "Live payment" : "Test payment"}</p>
+        <p>Reference: <code>{payment.id}</code></p>
+        {payment.status === "succeeded" ? <p className="payerSuccess">Payment confirmed by {provider}.</p>
+          : payment.status === "failed" ? <p className="formError">This payment failed. Ask the merchant for a fresh payment link.</p>
+          : payment.checkout ? <>
+            <p>{provider} will handle your payment details and any account sign-in or bank approval. On mobile, available app payment options may open in your installed app.</p>
+            <button className="primary wide" disabled={busy} onClick={pay}>
+              {busy ? "Opening checkout…" : `Continue to ${provider}`}
+            </button>
+            <small>PayX confirms the result only after verification with {provider}. This link expires {new Date(payment.expiresAt).toLocaleString()}.</small>
+          </> : <p>This checkout is unavailable or has expired. Ask the merchant for a new payment link.</p>}
+        {notice && <p>{notice}</p>}
+      </>}
+      {error && <p className="formError">{error}</p>}
+    </div>
+  </main>;
 }
 
 function Overview({
@@ -631,17 +691,9 @@ function Dashboard({
       });
       setLast(r.transaction);
       if (!r.duplicate) setTx((current) => [r.transaction, ...current]);
-      if (r.checkout && "kind" in r.checkout && !["succeeded", "failed"].includes(r.transaction.status)) {
-        notify(`Opening ${r.transaction.gateway} ${mode} checkout`);
-        await openCheckout(r.checkout, r.transaction.id, mode, (message) => {
-          notify(message);
-          void api.transactions(mode).then(setTx).catch(() => {});
-        });
-      } else {
-        notify(r.transaction.status === "simulated"
-          ? "No test gateway connected; payment simulated"
-          : r.duplicate ? "Existing transaction returned" : "Payment created");
-      }
+      notify(r.transaction.status === "simulated"
+        ? "No test gateway connected; payment simulated"
+        : r.duplicate ? "Existing payment link returned" : "Customer payment link created");
     } catch (error) {
       notify(error instanceof Error ? error.message : "Payment request failed");
     } finally {
@@ -756,7 +808,7 @@ function Dashboard({
             Generate new key
           </button>
           <button className="primary wide" onClick={run} disabled={busy || !canCreatePayment || (Boolean(session) && mode === "live" && !available.length)}>
-            {busy ? "Processing…" : !canCreatePayment ? "View only" : session ? `Create ${mode} checkout` : "Create simulated payment"}
+            {busy ? "Processing…" : !canCreatePayment ? "View only" : session ? `Create ${mode} payment link` : "Create simulated payment"}
           </button>
           {last && (
             <div className={"result " + last.status}>
@@ -774,6 +826,11 @@ function Dashboard({
                 <span>provider ID</span>
                 {last.gatewayTransactionId}
               </p>
+              {last.checkoutUrl && <div className="checkoutLink">
+                <small>Customer payment link</small>
+                <a href={last.checkoutUrl} target="_blank" rel="noreferrer">Open customer checkout</a>
+                <button className="secondary" onClick={() => void navigator.clipboard.writeText(last.checkoutUrl ?? "").then(() => notify("Payment link copied"))}>Copy link</button>
+              </div>}
             </div>
           )}
         </section>
@@ -853,6 +910,7 @@ function TransactionTable({ data }: { data: Transaction[] }) {
               <td>
                 <code>{t.id}</code>
                 <small>{t.idempotencyKey}</small>
+                {t.checkoutUrl && <a href={t.checkoutUrl} target="_blank" rel="noreferrer">Customer checkout</a>}
               </td>
               <td>
                 <span className={"status " + t.status}>{t.status}</span>
@@ -1260,7 +1318,9 @@ function Docs() {
               Creates a PayX transaction and returns a provider checkout action.
               Reuse the idempotency key only with identical request fields. Choose
               a connected gateway explicitly when multiple live providers exist.
-              The checkout return alone never confirms collection.
+              Send the returned checkoutUrl to your customer. They can pay without
+              a PayX merchant account; the provider handles any sign-in. The
+              checkout return alone never confirms collection.
             </p>
             <pre>{sample}</pre>
           </section>
@@ -1293,6 +1353,7 @@ function Docs() {
     "currency": "INR",
     "gateway": "stripe",
     "gatewayTransactionId": "cs_test_example",
+    "checkoutUrl": "https://pay-x-six.vercel.app/?checkout=SIGNED_TOKEN#pay",
     "checkout": { "kind": "redirect", "url": "https://checkout.stripe.com/..." }
   },
   "duplicate": false,

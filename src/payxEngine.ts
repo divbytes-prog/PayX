@@ -9,6 +9,8 @@ export type Gateway = {
 };
 
 export type Transaction = {
+  checkoutUrl?: string;
+  checkoutExpiresAt?: string;
   id: string;
   createdAt: string;
   amount: number;

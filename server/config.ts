@@ -1,6 +1,7 @@
 export const config = {
   databaseUrl: process.env.DATABASE_URL ?? "",
-  appUrl: (process.env.APP_URL ?? "http://localhost:5173").replace(/\/$/, ""),
+  appUrl: (process.env.APP_URL ?? (process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}` : "http://localhost:5173")).replace(/\/$/, ""),
   sessionSecret: process.env.SESSION_SECRET ?? "",
   encryptionKey: process.env.CREDENTIAL_ENCRYPTION_KEY ?? "",
   sandboxOnly:
