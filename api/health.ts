@@ -15,6 +15,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       status: database === "unavailable" ? "degraded" : "ok",
       service: "payx-api",
       database,
+      checkoutLinksReady: Boolean(process.env.APP_URL && config.sessionSecret.length >= 32 && config.appUrl.startsWith("https://")),
+      credentialStorageReady: Buffer.from(config.encryptionKey, "base64").length === 32,
       stripeOAuth: Boolean(config.stripeSecretKey && config.stripeConnectClientId && config.sessionSecret && config.encryptionKey),
       mode: config.sandboxOnly ? "sandbox" : "live_enabled",
       liveEnabled: !config.sandboxOnly && config.appUrl.startsWith("https://"),

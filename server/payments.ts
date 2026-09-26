@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Actor } from "./auth.js";
 import { audit } from "./auth.js";
 import { config, stripePlatform } from "./config.js";
-import { checkoutExpiresAt, checkoutToken, checkoutUrl } from "./checkoutLink.js";
+import { checkoutExpiresAt, checkoutUrl } from "./checkoutLink.js";
 import { db, ensureSchema } from "./db.js";
 import { ApiError } from "./http.js";
 import {
@@ -298,7 +298,7 @@ export async function createPayment(actor: Actor, inputValue: unknown) {
   if (provider === "paytm" && input.currency !== "INR")
     throw new ApiError(400, "UNSUPPORTED_CURRENCY", "Paytm checkout currently accepts INR only");
   const id = `px_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
-  if (!isSimulation) checkoutToken(id, actor.mode);
+  if (!isSimulation) checkoutUrl(id, actor.mode);
   const initialStatus = isSimulation ? "simulated" : "created";
   const inserted = await sql<Record<string, unknown>[]>`
     INSERT INTO transactions
