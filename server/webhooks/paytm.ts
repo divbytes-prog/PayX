@@ -1,7 +1,7 @@
 /// <reference path="../paytmchecksum.d.ts" />
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createHash, randomUUID } from "node:crypto";
-import { config as appConfig } from "../config.js";
+import { checkoutUrl } from "../checkoutLink.js";
 import { db, ensureSchema } from "../db.js";
 import { allowMethods, ApiError, ok, withApi } from "../http.js";
 import { readRawBody } from "../rawBody.js";
@@ -85,7 +85,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ${status ?? "UNKNOWN"}, ${sql.json({ orderId: callback.orderId, status })})
       ON CONFLICT (provider, provider_event_id) DO NOTHING`;
     if (req.headers.accept?.includes("text/html")) {
-      const url = `${appConfig.appUrl}/?payment=${encodeURIComponent(callback.orderId)}&mode=${row.mode}#dashboard`;
+      const url = checkoutUrl(callback.orderId, row.mode as "test" | "live");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.setHeader("Cache-Control", "no-store");
       return res.status(200).send(`<!doctype html><html><head><meta http-equiv="refresh" content="0;url=${url}"></head><body><a href="${url}">Return to PayX</a></body></html>`);

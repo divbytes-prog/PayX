@@ -7,8 +7,9 @@ PayX can initiate provider-hosted payments. Its public sandbox is only a simulat
 - Tenant-scoped users, sessions, roles, API keys, gateway credentials and transaction ledger.
 - Stripe Connect OAuth with a one-time state, Stripe hosted Checkout, and connected-account signed webhooks.
 - Razorpay Orders + Standard Checkout, authenticated server-side signature and captured-status verification, and a per-connection webhook URL/secret.
-- Paytm transaction initialization + JS Checkout, checksum-checked callbacks, and signed server-to-server Status API verification.
+- Paytm transaction initialization + hosted payment page, checksum-checked callbacks, and signed server-to-server Status API verification.
 - Test/live mode separation. The live switch is disabled by default; simulated payments cannot be mistaken for captured funds.
+- Signed customer payment links show merchant, amount and provider before continuing to the provider's checkout. Customers do not need PayX merchant accounts; provider sign-in and mobile UPI authorization remain with the provider.
 - Idempotency keys are checked against payment input, signed callbacks are matched to tenant, mode, amount and currency, and callbacks cannot downgrade a successful transaction.
 
 ## Before enabling live mode
@@ -19,6 +20,7 @@ PayX can initiate provider-hosted payments. Its public sandbox is only a simulat
 4. For each Razorpay merchant, connect the correct `rzp_test_` or `rzp_live_` key pair plus a unique webhook secret. Register the exact per-connection webhook URL shown in the dashboard. Configure automatic capture in Razorpay and verify a captured test payment.
 5. For each Paytm merchant, obtain the staging or production MID/key and configure the public callback URL `/api/webhooks/paytm`. Verify the test payment through Paytm's Transaction Status API.
 6. Test success, decline, cancellation, delayed webhook, duplicate webhook, idempotency retry, mismatched amount and currency, and a full return from provider checkout. Confirm the provider's dashboard and PayX ledger agree.
+   Test each customer link in a private browser without a PayX merchant session. On mobile, verify the installed Paytm or UPI app opens when selected. On desktop, verify the provider's browser checkout or QR flow; do not promise an app handoff on devices where the provider does not offer one.
 7. Set `PAYX_SANDBOX_ONLY=false` only after the preceding steps. Create a live API key as an owner or admin, connect a live provider, and make a small payment from a customer-controlled payment method. Confirm capture, webhook delivery and settlement in the provider dashboard. No agent should execute that financial transaction without a specified merchant, purpose and amount.
 
 ## Additional work before broad public SaaS use

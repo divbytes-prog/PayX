@@ -21,6 +21,11 @@ export type Checkout =
   | { kind: "paytm"; merchantId: string; orderId: string; token: string; amount: string; mode: "test" | "live" };
 
 export type Mode = "test" | "live";
+export type PublicCheckout = {
+  id: string; merchant: string; amount: number; currency: string; status: string;
+  provider: "stripe" | "razorpay" | "paytm"; mode: Mode;
+  expiresAt: string; checkout: Checkout | null;
+};
 const modeHeader = (mode: Mode) => ({ "X-PayX-Mode": mode });
 
 type ApiErrorBody = { error?: { code?: string; message?: string } };
@@ -72,6 +77,8 @@ function normalizeTransaction(value: Record<string, unknown>): Transaction {
       ? String(value.gatewayTransactionId)
       : "pending",
     routedBy: String(value.routedBy),
+    checkoutUrl: typeof value.checkoutUrl === "string" ? value.checkoutUrl : undefined,
+    checkoutExpiresAt: typeof value.checkoutExpiresAt === "string" ? value.checkoutExpiresAt : undefined,
   };
 }
 
@@ -116,10 +123,9 @@ export const api = {
     }>("/api/payments", { method: "POST", headers: modeHeader(input.mode), body: JSON.stringify(input) });
     return { ...result, checkout: result.transaction.checkout, transaction: normalizeTransaction(result.transaction) };
   },
-  verifyRazorpay: (input: { transactionId: string; orderId: string; paymentId: string; signature: string; mode: Mode }) =>
-    request<{ status: string }>("/api/payments/razorpay/verify", {
-      method: "POST", headers: modeHeader(input.mode), body: JSON.stringify(input),
-    }),
+  publicCheckout: (token: string) => request<PublicCheckout>(`/api/checkout?token=${encodeURIComponent(token)}`),
+  verifyRazorpay: (input: { token: string; orderId: string; paymentId: string; signature: string }) =>
+    request<{ status: string }>("/api/checkout", { method: "POST", body: JSON.stringify(input) }),
   gateways: async () =>
     (await request<{ gateways: ConnectedGateway[] }>("/api/gateways")).gateways,
   connectGateway: (input: Record<string, unknown>) =>
