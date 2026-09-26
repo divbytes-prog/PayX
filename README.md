@@ -38,7 +38,7 @@ The public experience includes an anonymous browser sandbox at [`#sandbox`](http
 
 - **Stripe:** Stripe Connect OAuth with one-time state, connected-account hosted Checkout, and signed Connect webhooks
 - **Razorpay:** merchant credential validation, Orders + Standard Checkout, server-side signature and capture checks, and per-merchant signed webhooks
-- **Paytm:** encrypted credentials, transaction initialization, JS Checkout, signed callback and server-to-server status verification
+- **Paytm:** encrypted credentials, transaction initialization, hosted payment page, signed callback and server-to-server status verification
 - Balanced, lowest-fee, and lowest-latency routing policies
 - Provider adapter boundary so merchant requests stay stable
 
@@ -141,6 +141,8 @@ curl -X POST https://pay-x-six.vercel.app/api/payments \
 `amount` uses major currency units in the PayX contract. Provider adapters convert to provider-specific minor units where required.
 
 The response includes `transaction.checkoutUrl` when a connected provider is used. Give this link to the customer. The customer sees the merchant, amount and provider without signing in to PayX, then chooses **Continue to provider**. Stripe opens hosted Stripe Checkout. Paytm redirects to its payment page and may show its app/UPI options on a mobile device. Razorpay Standard Checkout can hand off to an installed UPI app on mobile, depending on the merchant's enabled payment methods. Provider sign-in, account selection and payment authorization happen with that provider; PayX never requests the customer's provider password or UPI PIN. A return to PayX alone does not mark a payment successful: the app waits for verified provider status. The checkout link expires after 14 minutes for Paytm and after 24 hours for Stripe/Razorpay; create a new payment with a new idempotency key after expiry.
+
+The merchant selects the gateway when creating a link; the customer selects from the payment methods that gateway makes available. Do not generate separate provider links for one order without a shared payment-attempt state and duplicate-charge prevention. For an Amazon Pay-style buyer experience, PayX keeps the order summary and verified status on its own site while the provider owns account sign-in and payment authorization. Amazon Pay itself is a separate integration that requires an eligible merchant account and is not enabled here.
 
 ## Gateway setup
 

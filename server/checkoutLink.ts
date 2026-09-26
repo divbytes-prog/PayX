@@ -20,6 +20,10 @@ export function validateCheckoutToken(value: string, id: string, mode: "test" | 
 }
 
 export function checkoutUrl(id: string, mode: "test" | "live") {
+  if (process.env.NODE_ENV === "production" && !process.env.APP_URL)
+    throw new ConfigurationError("APP_URL must be set to the public HTTPS customer checkout domain");
+  if (process.env.NODE_ENV === "production" && !config.appUrl.startsWith("https://"))
+    throw new ConfigurationError("APP_URL must use HTTPS in production");
   return `${config.appUrl}/?checkout=${encodeURIComponent(checkoutToken(id, mode))}#pay`;
 }
 

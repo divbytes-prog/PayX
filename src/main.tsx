@@ -81,6 +81,8 @@ function App() {
   const [backendReady, setBackendReady] = useState(false);
   const [stripeOAuthReady, setStripeOAuthReady] = useState(false);
   const [stripeLiveOAuthReady, setStripeLiveOAuthReady] = useState(false);
+  const [checkoutLinksReady, setCheckoutLinksReady] = useState(false);
+  const [credentialStorageReady, setCredentialStorageReady] = useState(false);
   const [liveEnabled, setLiveEnabled] = useState(false);
   const [mode, setMode] = useState<Mode>("test");
   const go = (next: View) => {
@@ -124,6 +126,8 @@ function App() {
     api.health().then(async (health) => {
       setStripeOAuthReady(health.stripeOAuth);
       setStripeLiveOAuthReady(health.stripeLiveOAuth);
+      setCheckoutLinksReady(health.checkoutLinksReady);
+      setCredentialStorageReady(health.credentialStorageReady);
       setLiveEnabled(health.liveEnabled);
       if (health.database !== "configured") return;
       setBackendReady(true);
@@ -247,6 +251,8 @@ function App() {
           backendReady={backendReady}
           stripeOAuthReady={stripeOAuthReady}
           stripeLiveOAuthReady={stripeLiveOAuthReady}
+          checkoutLinksReady={checkoutLinksReady}
+          credentialStorageReady={credentialStorageReady}
           liveEnabled={liveEnabled}
         />
       )}
@@ -943,6 +949,8 @@ function GatewayPage({
   backendReady,
   stripeOAuthReady,
   stripeLiveOAuthReady,
+  checkoutLinksReady,
+  credentialStorageReady,
   liveEnabled,
 }: {
   gateways: Gateway[];
@@ -955,6 +963,8 @@ function GatewayPage({
   backendReady: boolean;
   stripeOAuthReady: boolean;
   stripeLiveOAuthReady: boolean;
+  checkoutLinksReady: boolean;
+  credentialStorageReady: boolean;
   liveEnabled: boolean;
 }) {
   const update = (id: string, p: Partial<Gateway>) =>
@@ -991,6 +1001,12 @@ function GatewayPage({
       {!session && !backendReady && (
         <div className="saasNotice"><div><b>Gateway connection requires a configured workspace.</b><span>You can still change gateway health in the browser sandbox.</span></div></div>
       )}
+      {session && (!checkoutLinksReady || !credentialStorageReady || !liveEnabled) && <div className="saasNotice">
+        <div>
+          <b>Production payment readiness</b>
+          <span>Checkout links: {checkoutLinksReady ? "ready" : "configure a public HTTPS APP_URL and 32+ character SESSION_SECRET"} · Credential storage: {credentialStorageReady ? "ready" : "configure a 32-byte Base64 CREDENTIAL_ENCRYPTION_KEY"} · Live mode: {liveEnabled ? "enabled" : "disabled while sandbox-only"}. Connect and test provider accounts and webhooks before accepting real payments.</span>
+        </div>
+      </div>}
       <div className="gatewayCards">
         {gateways.map((g) => (
           <article className="panel" key={g.id}>
